@@ -1,0 +1,7 @@
+node_modules/
+.local-chromium/
+*.mp4
+*.log
+__pycache__/
+.wwebjs_auth/
+.wwebjs_cache/
