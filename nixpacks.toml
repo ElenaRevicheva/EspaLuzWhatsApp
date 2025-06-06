@@ -10,7 +10,6 @@ nixPkgs = [
   "python311Packages.pip",
   "ffmpeg",
   "libffi",
-  "libnss3",
   "libx11",
   "libxcomposite",
   "libxcursor",
@@ -29,6 +28,5 @@ nixPkgs = [
 [phases.install]
 cmd = "pip3 install --upgrade pip && pip3 install -r requirements.txt"
 
-[phases.start]
+[start]
 cmd = "python3 espaluz_bridge.py"
-
