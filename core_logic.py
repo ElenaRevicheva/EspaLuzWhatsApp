@@ -12,11 +12,11 @@ def process_message_internal(user_id, user_message):
 
     payload = {
         "messaging_product": "whatsapp",
-        "to": user_id,  # This must be a full WhatsApp number like "50764597519"
+        "to": user_id,  # Must be full WhatsApp number, e.g., "50764597519"
         "type": "template",
         "template": {
             "name": "espaluz_reply",
-            "language": { "code": "es_MX" },  # Use your approved locale, or "es_PA" if supported
+            "language": { "code": "es_MX" },  # Or "es_PA" if your template uses that
             "components": [
                 {
                     "type": "body",
@@ -28,14 +28,22 @@ def process_message_internal(user_id, user_message):
         }
     }
 
-    response = requests.post(
-        f"https://graph.facebook.com/v18.0/{phone_number_id}/messages",
-        headers=headers,
-        json=payload
-    )
+    try:
+        response = requests.post(
+            f"https://graph.facebook.com/v18.0/{phone_number_id}/messages",
+            headers=headers,
+            json=payload
+        )
+        response_data = response.json() if response.content else {}
 
-    return {
-        "user_id": user_id,
-        "status_code": response.status_code,
-        "result": response.json() if response.content else "No response"
-    }
+        return {
+            "response": f"✅ WhatsApp message sent to {user_id}",
+            "status_code": response.status_code,
+            "result": response_data
+        }
+
+    except Exception as e:
+        return {
+            "response": "❌ Error sending WhatsApp message",
+            "error": str(e)
+        }
