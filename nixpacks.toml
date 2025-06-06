@@ -1,10 +1,10 @@
 [build]
 builder = "nixpacks"
 
+providers = ["python"]
+
 [variables]
 PYTHONUNBUFFERED = "1"
-
-providers = ["python"]
 
 [phases.setup]
 nixPkgs = [
