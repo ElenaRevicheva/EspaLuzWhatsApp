@@ -3,15 +3,28 @@ from flask_cors import CORS
 import os
 import logging
 
-from core_logic import process_message_internal  # Claude brain or shared logic
+from core_logic import process_message_internal  # Claude logic here
 
-# Initialize Flask app
+# App setup
 app = Flask(__name__)
 CORS(app)
-
-# Enable basic logging
 logging.basicConfig(level=logging.INFO)
 
+# Webhook verification (GET)
+@app.route("/webhook", methods=["GET"])
+def verify_webhook():
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+
+    if mode == "subscribe" and token == "espaluz123":
+        logging.info("✅ Webhook verified by Meta.")
+        return challenge, 200
+    else:
+        logging.warning("❌ Webhook verification failed.")
+        return "Verification failed", 403
+
+# Message handler (POST)
 @app.route("/webhook", methods=["POST"])
 def handle_message():
     try:
@@ -29,7 +42,7 @@ def handle_message():
         logging.exception("❌ Error processing request")
         return jsonify({"error": str(e)}), 500
 
-# Launch server on assigned Railway port or default to 5000
+# Start server
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
