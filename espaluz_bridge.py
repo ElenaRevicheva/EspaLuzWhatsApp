@@ -2,15 +2,16 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import logging
+import requests
 
-from core_logic import process_message_internal  # Claude logic here
+from core_logic import process_message_internal  # Your Claude logic
 
 # App setup
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
 
-# Webhook verification (GET)
+# Meta webhook verification (GET)
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -24,23 +25,56 @@ def verify_webhook():
         logging.warning("❌ Webhook verification failed.")
         return "Verification failed", 403
 
-# Message handler (POST)
+# Handle incoming WhatsApp messages (POST)
 @app.route("/webhook", methods=["POST"])
 def handle_message():
     try:
         data = request.get_json()
+        logging.info(f"🌐 Incoming webhook: {data}")
 
-        user_id = data.get("user_id", "unknown")
-        user_message = data.get("message", "")
+        # Meta format parsing
+        entry = data.get("entry", [])[0]
+        changes = entry.get("changes", [])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages", [])
 
-        logging.info(f"📩 Incoming from {user_id}: {user_message}")
+        if not messages:
+            logging.info("📭 No user message found.")
+            return "ok", 200
 
-        response = process_message_internal(user_id, user_message)
+        message = messages[0]
+        user_id = message["from"]
+        user_text = message["text"]["body"]
 
-        return jsonify(response), 200
+        logging.info(f"📩 Message from {user_id}: {user_text}")
+
+        # Claude logic
+        reply_text = process_message_internal(user_id, user_text)["response"]
+
+        # Send WhatsApp reply
+        send_whatsapp_message(user_id, reply_text)
+
+        return "ok", 200
+
     except Exception as e:
-        logging.exception("❌ Error processing request")
+        logging.exception("❌ Error handling message")
         return jsonify({"error": str(e)}), 500
+
+# Send reply to WhatsApp using Meta API
+def send_whatsapp_message(to_number, message_text):
+    url = "https://graph.facebook.com/v18.0/606234349243641/messages"  # Your Phone Number ID
+    headers = {
+        "Authorization": f"Bearer {os.getenv('WHATSAPP_API_TOKEN')}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "text",
+        "text": {"body": message_text}
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    logging.info(f"📤 Sent to {to_number}, response: {response.status_code} - {response.text}")
 
 # Start server
 if __name__ == "__main__":
