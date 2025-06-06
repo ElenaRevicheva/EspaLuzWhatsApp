@@ -1,0 +1,7 @@
+openai
+telebot
+python-dotenv
+requests
+gtts
+pytesseract
+pillow
