@@ -1,14 +1,34 @@
 [build]
-language = "python"
+builder = "nixpacks"
+
+[variables]
+PYTHONUNBUFFERED = "1"
 
 [phases.setup]
-nixPkgs = ["python311", "ffmpeg", "git", "curl"]
-
-[phases.install]
-cmds = [
-  "python3 -m pip install --upgrade pip",
-  "python3 -m pip install -r requirements.txt"
+nixPkgs = [
+  "python311",
+  "python311Packages.pip",
+  "ffmpeg",
+  "libffi",
+  "libnss3",
+  "libx11",
+  "libxcomposite",
+  "libxcursor",
+  "libxdamage",
+  "libxext",
+  "libxfixes",
+  "libxi",
+  "libxtst",
+  "libxrandr",
+  "gtk3",
+  "pango",
+  "atk",
+  "cups"
 ]
 
-[start]
+[phases.install]
+cmd = "pip3 install --upgrade pip && pip3 install -r requirements.txt"
+
+[phases.start]
 cmd = "python3 espaluz_bridge.py"
+
