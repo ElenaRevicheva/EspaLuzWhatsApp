@@ -1,6 +1,9 @@
 [build]
 builder = "nixpacks"
 
+[variables]
+PYTHONUNBUFFERED = "1"
+
 [phases.setup]
 nixPkgs = [
   "python311",
@@ -14,7 +17,7 @@ nixPkgs = [
 ]
 
 [phases.install]
-cmd = "pip install --upgrade pip && pip install -r requirements.txt"
+cmd = "pip3 install --upgrade pip && pip3 install -r requirements.txt"
 
 [phases.start]
 cmd = "python3 espaluz_bridge.py"
