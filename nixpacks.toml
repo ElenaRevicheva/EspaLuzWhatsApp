@@ -19,5 +19,5 @@ nixPkgs = [
 [phases.install]
 cmd = "pip3 install --upgrade pip && pip3 install -r requirements.txt"
 
-[start]
+[phases.start]
 cmd = "python3 espaluz_bridge.py"
