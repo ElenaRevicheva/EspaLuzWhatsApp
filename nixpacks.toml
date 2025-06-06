@@ -1,8 +1,11 @@
+[build]
+  language = "python"
+
 [phases.setup]
 nixPkgs = ["python311", "ffmpeg"]
 
 [phases.install]
-cmds = ["pip3 install -r requirements.txt"]
+cmds = ["pip3 install --upgrade pip", "pip3 install -r requirements.txt"]
 
 [start]
 cmd = "python3 espaluz_bridge.py"
