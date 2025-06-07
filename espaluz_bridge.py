@@ -4,7 +4,7 @@ import os
 import logging
 import requests
 
-from core_logic import process_message_internal  # Your Claude logic
+from core_logic import process_message_internal  # Claude logic
 
 # App setup
 app = Flask(__name__)
@@ -32,7 +32,6 @@ def handle_message():
         data = request.get_json()
         logging.info(f"🌐 Incoming webhook: {data}")
 
-        # Meta format parsing
         entry = data.get("entry", [])[0]
         changes = entry.get("changes", [])[0]
         value = changes.get("value", {})
@@ -43,36 +42,38 @@ def handle_message():
             return "ok", 200
 
         message = messages[0]
-        user_id = message["from"]
-        user_text = message["text"]["body"]
+        user_id = message.get("from")
+        user_text = message.get("text", {}).get("body", "")
 
         logging.info(f"📩 Message from {user_id}: {user_text}")
 
-        # Claude logic
-        reply_text = process_message_internal(user_id, user_text)["response"]
+        reply = process_message_internal(user_id, user_text)
+        reply_text = reply.get("response", "Lo siento, no entendí eso.")
 
-        # Send WhatsApp reply
         send_whatsapp_message(user_id, reply_text)
-
         return "ok", 200
 
     except Exception as e:
         logging.exception("❌ Error handling message")
         return jsonify({"error": str(e)}), 500
 
-# Send reply to WhatsApp using Meta API
+# Send WhatsApp reply
 def send_whatsapp_message(to_number, message_text):
-    url = "https://graph.facebook.com/v18.0/606234349243641/messages"  # Your Phone Number ID
+    phone_number_id = os.getenv("PHONE_NUMBER_ID")
+    access_token = os.getenv("WHATSAPP_API_TOKEN")
+
+    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
     headers = {
-        "Authorization": f"Bearer {os.getenv('WHATSAPP_API_TOKEN')}",
+        "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
     payload = {
         "messaging_product": "whatsapp",
         "to": to_number,
         "type": "text",
-        "text": {"body": message_text}
+        "text": { "body": message_text }
     }
+
     response = requests.post(url, headers=headers, json=payload)
     logging.info(f"📤 Sent to {to_number}, response: {response.status_code} - {response.text}")
 
