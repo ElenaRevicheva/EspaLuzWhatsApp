@@ -5,3 +5,4 @@ node_modules/
 __pycache__/
 .wwebjs_auth/
 .wwebjs_cache/
+.env
