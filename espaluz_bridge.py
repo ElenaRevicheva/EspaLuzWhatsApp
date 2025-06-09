@@ -174,41 +174,16 @@ def send_whatsapp_message(to, text):
     except Exception as e:
         logging.error(f"Error sending text message: {e}")
 
-def upload_to_temp_hosting(file_path):
-    """Upload file to temporary hosting service and return public URL"""
-    try:
-        # Use a simple file hosting service like 0x0.st or file.io
-        with open(file_path, 'rb') as f:
-            response = requests.post('https://0x0.st', files={'file': f})
-            
-        if response.status_code == 200:
-            url = response.text.strip()
-            logging.info(f"📤 Uploaded to temp host: {url}")
-            return url
-        else:
-            logging.error(f"Upload failed: {response.status_code}")
-            return None
-            
-    except Exception as e:
-        logging.error(f"Upload error: {e}")
-        return None
-
 def send_whatsapp_audio(to, audio_file_path):
-    """Send audio file via Twilio MediaUrl"""
+    """Send audio file - Simple approach without external hosting"""
     try:
-        # Upload file to temporary hosting
-        media_url = upload_to_temp_hosting(audio_file_path)
-        
-        if not media_url:
-            logging.error("Failed to upload audio file")
-            return
-            
+        # For now, just send a text message indicating audio was generated
+        # This is a temporary solution until we solve hosting
         message_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
         data = {
             'From': TWILIO_NUMBER,
             'To': f"whatsapp:{to}",
-            'Body': "🎧 Audio message",  # Body is required
-            'MediaUrl': media_url
+            'Body': "🎧 Audio generado / Audio generated (hosting en desarrollo / hosting in development)"
         }
         
         response = requests.post(
@@ -217,29 +192,23 @@ def send_whatsapp_audio(to, audio_file_path):
             auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         )
         
-        logging.info(f"🎧 Sent audio to {to} status: {response.status_code}")
+        logging.info(f"🎧 Sent audio notification to {to} status: {response.status_code}")
         if response.status_code != 201:
-            logging.error(f"Audio send failed: {response.text}")
+            logging.error(f"Audio notification failed: {response.text}")
             
     except Exception as e:
-        logging.error(f"Error sending audio: {e}")
+        logging.error(f"Error sending audio notification: {e}")
 
 def send_whatsapp_video(to, video_file_path):
-    """Send video file via Twilio MediaUrl"""
+    """Send video file - Simple approach without external hosting"""
     try:
-        # Upload file to temporary hosting
-        media_url = upload_to_temp_hosting(video_file_path)
-        
-        if not media_url:
-            logging.error("Failed to upload video file")
-            return
-            
+        # For now, just send a text message indicating video was generated
+        # This is a temporary solution until we solve hosting
         message_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
         data = {
             'From': TWILIO_NUMBER,
             'To': f"whatsapp:{to}",
-            'Body': "🎥 Video message",  # Body is required
-            'MediaUrl': media_url
+            'Body': "🎥 Video generado / Video generated (hosting en desarrollo / hosting in development)"
         }
         
         response = requests.post(
@@ -248,12 +217,12 @@ def send_whatsapp_video(to, video_file_path):
             auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         )
         
-        logging.info(f"🎥 Sent video to {to} status: {response.status_code}")
+        logging.info(f"🎥 Sent video notification to {to} status: {response.status_code}")
         if response.status_code != 201:
-            logging.error(f"Video send failed: {response.text}")
+            logging.error(f"Video notification failed: {response.text}")
             
     except Exception as e:
-        logging.error(f"Error sending video: {e}")
+        logging.error(f"Error sending video notification: {e}")
 
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
