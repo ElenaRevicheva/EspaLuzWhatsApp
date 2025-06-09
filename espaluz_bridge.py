@@ -163,14 +163,20 @@ def process_whatsapp_voice_async(user_id, media_url):
     """Process voice message asynchronously"""
     def process():
         try:
+            logging.info(f"🎤 Starting voice processing for {user_id}")
+            
             # Send initial processing message
             send_whatsapp_message(user_id, "🎤 Procesando mensaje de voz... / Processing voice message...")
             
             # Download audio file
-            response = requests.get(media_url)
+            logging.info(f"🔗 Downloading audio from: {media_url}")
+            response = requests.get(media_url, timeout=30)
             if response.status_code != 200:
+                logging.error(f"Audio download failed: {response.status_code}")
                 send_whatsapp_message(user_id, "❌ No pude descargar el audio. Could not download audio.")
                 return
+            
+            logging.info(f"✅ Audio downloaded, size: {len(response.content)} bytes")
             
             # Save downloaded audio
             timestamp = int(time.time())
@@ -180,26 +186,37 @@ def process_whatsapp_voice_async(user_id, media_url):
             with open(original_audio, 'wb') as f:
                 f.write(response.content)
             
+            logging.info(f"💾 Audio saved to: {original_audio}")
+            
             # Convert audio format for Whisper
+            logging.info("🔄 Converting audio format...")
             if not convert_audio_format(original_audio, converted_audio):
                 send_whatsapp_message(user_id, "❌ Error convirtiendo audio. Error converting audio.")
                 return
             
+            logging.info(f"✅ Audio converted to: {converted_audio}")
+            
             # Transcribe audio
+            logging.info("🗣️ Transcribing with Whisper...")
             transcription = transcribe_audio_with_openai(converted_audio)
             
-            if not transcription:
+            if not transcription or len(transcription.strip()) == 0:
+                logging.error("Transcription failed or empty")
                 send_whatsapp_message(user_id, "❌ No pude transcribir el audio. Could not transcribe audio.")
                 return
+            
+            logging.info(f"✅ Transcription successful: {transcription}")
             
             # Send transcription
             send_whatsapp_message(user_id, f"🗣️ Transcripción / Transcription:\n{transcription}")
             
             # Get translation
+            logging.info("🌐 Translating...")
             translation = translate_to_es_en(transcription)
             send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
             
             # Process transcription as text message (get Claude response + multimedia)
+            logging.info("🤖 Processing with Claude...")
             process_transcribed_message(user_id, transcription)
             
             # Clean up temp files
@@ -207,13 +224,16 @@ def process_whatsapp_voice_async(user_id, media_url):
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     
+            logging.info("🧹 Cleanup completed")
+                    
         except Exception as e:
-            logging.error(f"Error processing voice message: {e}")
+            logging.exception(f"❌ Error processing voice message: {e}")
             send_whatsapp_message(user_id, "❌ Error procesando mensaje de voz. Error processing voice message.")
     
     # Run in background thread
     thread = threading.Thread(target=process, daemon=True)
     thread.start()
+    logging.info(f"🚀 Voice processing thread started for {user_id}")
 
 def process_transcribed_message(user_id, transcription):
     """Process transcribed text and generate multimedia response"""
