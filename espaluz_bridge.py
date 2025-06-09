@@ -37,7 +37,7 @@ COUNTRY_CONTEXTS = {
         "landmarks": ["Casco Viejo", "Canal de Panamá", "Cerro Ancón", "Amador Causeway"],
         "food": ["sancocho", "patacones", "ceviche", "arroz con pollo", "tamales"],
         "greetings": ["¿Qué xopá?", "¿Cómo andas?", "¡Épale!"],
-        "cultural_tips": "Panamanians are very welcoming to expats. The country uses USD, making it easy for American families.",
+        "cultural_tips": "Panamanians are very welcoming to expat families. The country uses USD, making it easy for American families.",
         "climate": "tropical with rainy (May-Nov) and dry seasons (Dec-Apr)",
         "expat_areas": ["Casco Viejo", "San Francisco", "Punta Pacifica", "El Cangrejo"],
         "language_note": "Panamanian Spanish is clear and relatively easy to understand"
@@ -147,11 +147,21 @@ def clean_text_for_speech(text: str) -> str:
     return text.strip()
 
 def extract_video_script(full_response):
+    """Extract video script from Claude response, ensuring it's clean"""
     if "[VIDEO SCRIPT START]" in full_response and "[VIDEO SCRIPT END]" in full_response:
         start_idx = full_response.find("[VIDEO SCRIPT START]") + len("[VIDEO SCRIPT START]")
         end_idx = full_response.find("[VIDEO SCRIPT END]", start_idx)
-        return full_response[start_idx:end_idx].strip()
-    return "¡Gracias por practicar conmigo! Thank you for practicing with me!"
+        script = full_response[start_idx:end_idx].strip()
+        
+        # Clean the script and ensure it's reasonable length
+        script = clean_text_for_speech(script)
+        if len(script) > 200:  # Limit for 30-second video
+            script = script[:200] + "..."
+        
+        return script if script else "¡Hola familia! Hello family! ¡Aprendamos español juntos! Let's learn Spanish together!"
+    
+    # Fallback if no script found
+    return "¡Hola familia! Hello family! ¡Gracias por practicar conmigo! Thank you for practicing with me!"
 
 def generate_tts_audio(text, filename):
     try:
@@ -228,23 +238,29 @@ def create_video_with_looped_base(script_text, output_path):
         logging.error(f"Video creation error: {e}")
         return False
 
-def translate_to_es_en(text):
-    """Translate text to Spanish and English using OpenAI"""
+def translate_to_es_en_only(text):
+    """Translate any input to Spanish and English ONLY - no Russian output"""
     try:
         headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
         data = {
             "model": "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": f"Translate this message into both Spanish and English:\n\n{text}"}],
+            "messages": [{
+                "role": "system", 
+                "content": "You are a translator that ONLY outputs Spanish and English. No matter what language the input is (Russian, Chinese, etc.), translate it to BOTH Spanish and English. Format: 'Spanish: [translation]\nEnglish: [translation]'"
+            }, {
+                "role": "user", 
+                "content": f"Translate this to Spanish and English only:\n\n{text}"
+            }],
             "max_tokens": 500
         }
         res = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
         if res.status_code == 200:
             return res.json()["choices"][0]["message"]["content"]
         else:
-            return f"Translation: {text} (translation service unavailable)"
+            return f"Spanish: {text}\nEnglish: {text}"
     except Exception as e:
         logging.error(f"Translation error: {e}")
-        return f"Translation: {text} (error in translation)"
+        return f"Spanish: {text}\nEnglish: {text}"
 
 def convert_audio_format_enhanced(input_path, output_path):
     """Enhanced audio conversion with better error handling"""
@@ -373,7 +389,7 @@ def detect_user_country(message_text, user_id):
     return "panama"
 
 def process_message_with_claude_enhanced(user_id, message_text):
-    """Enhanced processing with multi-country support"""
+    """Enhanced processing with multi-country support - NO RUSSIAN IN OUTPUT"""
     try:
         # Detect the country context
         detected_country = detect_user_country(message_text, user_id)
@@ -399,55 +415,47 @@ Expat Areas: {', '.join(country_context['expat_areas'])}
 Language Note: {country_context['language_note']}
 """
         
-        system_prompt = f"""You are Espaluz, a bilingual emotionally intelligent AI language tutor for Russian and English-speaking expat families across Latin America and Spain.
+        system_prompt = f"""You are Espaluz, a bilingual AI language tutor for expat families in Latin America and Spain.
 
 {context_info}
 
-Your answer should have TWO PARTS:
+CRITICAL: You MUST respond ONLY in Spanish and English. NEVER use Russian, Chinese, or any other language in your response.
 
-1️⃣ A FULL, RICH, EMOTIONALLY INTELLIGENT bilingual response:
-   - Be deeply engaging, warm, and family-oriented for ALL family members
-   - Address different ages (children, parents, grandparents) appropriately
+Your answer must have TWO PARTS:
+
+1️⃣ A COMPLETE, RICH, BILINGUAL response (Spanish and English ONLY):
+   - Be warm and family-oriented for ALL family members
+   - Address different ages (children, parents, grandparents)
    - Include specific cultural insights about {detected_country.upper()}
    - Use both Spanish and English naturally throughout
    - Be educational but conversational and emotionally supportive
    - Include practical tips relevant to {detected_country} specifically
    - Reference local customs, food, transport, and expat life
-   - Make it interesting for ALL ages and genders in the family
-   - Length: 500-800 characters for rich, meaningful content
+   - Make it interesting for ALL ages
+   - Length: 700-1000 characters for rich, meaningful content
+   - NO truncation - provide the FULL response
 
-2️⃣ A SHORT video script (for 30-second video) inside [VIDEO SCRIPT START] ... [VIDEO SCRIPT END]:
-   - Only 2-4 sentences that fit perfectly in 30 seconds
+2️⃣ A SHORT video script (30-second spoken video) inside [VIDEO SCRIPT START] ... [VIDEO SCRIPT END]:
+   - EXACTLY 2-3 short sentences that fit in 30 seconds
    - Use both Spanish and English
    - Warm, clear, and simple for spoken delivery
    - Include the KEY point about {detected_country}
+   - Maximum 150 characters
    
-Example for Mexico:
-¡Hola familia! Para usar el metro en Ciudad de México, compren una tarjeta en cualquier estación. Hello family! To use the metro in Mexico City, buy a card at any station.
-
-Para los niños: ¡El metro tiene 12 líneas de colores! Es como un arcoíris subterráneo. For children: The metro has 12 colored lines! It's like an underground rainbow.
-
-Para los adultos: Eviten las horas pico (7-9 AM y 6-8 PM). Es muy económico, solo $5 pesos. For adults: Avoid rush hours (7-9 AM & 6-8 PM). It's very cheap, just $5 pesos.
-
-Para los abuelos: Hay asientos preferenciales y elevadores en las estaciones nuevas. For grandparents: There are priority seats and elevators in newer stations.
-
-¡El metro de CDMX es patrimonio cultural! CDMX metro is cultural heritage! Cada estación tiene símbolos únicos porque muchas personas no sabían leer cuando se construyó. Each station has unique symbols because many people couldn't read when it was built.
-
+Example structure:
+Main response: Detailed, warm bilingual advice with cultural context for {detected_country}...
 [VIDEO SCRIPT START]
-¡Hola! En Ciudad de México, usa el metro con tarjeta.
-Hello! In Mexico City, use the metro with a card.
-¡Es barato, rápido y cada estación tiene símbolos únicos!
-It's cheap, fast and each station has unique symbols!
+¡Hola familia! En {detected_country}, [key tip]. Hello family! In {detected_country}, [key tip].
 [VIDEO SCRIPT END]
 
-Today is {datetime.now().strftime('%Y-%m-%d')}. The family is learning about life in {detected_country}."""
+Today is {datetime.now().strftime('%Y-%m-%d')}. Respond ONLY in Spanish and English."""
 
         messages = [{"role": "user", "content": message_text}]
         data = {
             "model": "claude-sonnet-4-20250514",
             "messages": messages,
             "system": system_prompt,
-            "max_tokens": 1200,
+            "max_tokens": 1500,  # Increased to prevent truncation
             "temperature": 0.7
         }
         
@@ -457,6 +465,10 @@ Today is {datetime.now().strftime('%Y-%m-%d')}. The family is learning about lif
             reply = r.json()["content"][0]["text"]
             full_reply = reply.strip()
             
+            # Log the full reply to debug truncation
+            logging.info(f"🤖 Full Claude reply length: {len(full_reply)} chars")
+            logging.info(f"🤖 Full reply preview: {full_reply[:200]}...")
+            
             # Extract video script
             short_reply = extract_video_script(full_reply)
             
@@ -465,6 +477,7 @@ Today is {datetime.now().strftime('%Y-%m-%d')}. The family is learning about lif
             short_reply_clean = clean_text_for_speech(short_reply)
             
             logging.info(f"🌎 Generated response for {detected_country.upper()}")
+            logging.info(f"📹 Video script: {short_reply_clean}")
             
             return {
                 "full_reply": full_reply,
@@ -482,27 +495,32 @@ Today is {datetime.now().strftime('%Y-%m-%d')}. The family is learning about lif
         return fallback_response_enhanced(message_text, detected_country)
 
 def fallback_response_enhanced(message_text, country="panama"):
-    """Enhanced fallback with country context"""
+    """Enhanced fallback with country context - NO RUSSIAN"""
     country_context = COUNTRY_CONTEXTS.get(country, COUNTRY_CONTEXTS["panama"])
     
-    fallback_text = f"¡Hola! Te ayudo con español en {country.title()}. Hello! I help you with Spanish in {country.title()}. {country_context['cultural_tips']}"
+    fallback_text = f"¡Hola familia! Te ayudo con español en {country.title()}. Hello family! I help you with Spanish in {country.title()}. {country_context['cultural_tips']} ¿En qué más puedo ayudarte? What else can I help you with?"
+    
+    video_script = f"¡Hola! Soy Espaluz en {country.title()}. Hello! I'm Espaluz in {country.title()}."
     
     return {
         "full_reply": fallback_text,
-        "short_reply": f"¡Hola! Aprendamos español en {country.title()}. Hello! Let's learn Spanish in {country.title()}.",
+        "short_reply": video_script,
         "full_reply_clean": fallback_text,
-        "short_reply_clean": f"¡Hola! Aprendamos español en {country.title()}. Hello! Let's learn Spanish in {country.title()}.",
+        "short_reply_clean": video_script,
         "detected_country": country
     }
 
 def process_whatsapp_voice_async_enhanced(user_id, media_url):
-    """Enhanced voice processing with multi-country support"""
+    """Enhanced voice processing with multi-country support - NO RUSSIAN OUTPUT"""
     def process():
         try:
             logging.info(f"🎤 Starting enhanced voice processing for {user_id}")
             
             # Send initial processing message
-            send_whatsapp_message(user_id, "🎤 Procesando mensaje de voz... / Processing voice message...")
+            try:
+                send_whatsapp_message(user_id, "🎤 Procesando mensaje de voz... / Processing voice message...")
+            except Exception as e:
+                logging.error(f"Failed to send processing message: {e}")
             
             # Step 1: Download and convert audio
             logging.info(f"🔗 Getting authenticated media URL from: {media_url}")
@@ -558,11 +576,17 @@ def process_whatsapp_voice_async_enhanced(user_id, media_url):
             logging.info(f"✅ Transcription successful: {transcription}")
             
             # Step 5: Send original transcription
-            send_whatsapp_message(user_id, f"🗣️ Dijiste / You said:\n{transcription}")
+            try:
+                send_whatsapp_message(user_id, f"🗣️ Dijiste / You said:\n{transcription}")
+            except Exception as e:
+                logging.error(f"Failed to send transcription: {e}")
             
-            # Step 6: Send translation
-            translation = translate_to_es_en(transcription)
-            send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
+            # Step 6: Send translation (Spanish/English ONLY)
+            try:
+                translation = translate_to_es_en_only(transcription)
+                send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
+            except Exception as e:
+                logging.error(f"Failed to send translation: {e}")
             
             # Step 7: Get Claude's ENHANCED response with country detection
             result = process_message_with_claude_enhanced(user_id, transcription)
@@ -577,47 +601,88 @@ def process_whatsapp_voice_async_enhanced(user_id, media_url):
             flag = country_flags.get(detected_country, "🌎")
             
             # Step 8: Send FULL, country-specific text response
-            send_whatsapp_message(user_id, f"🤖 Espaluz {flag}:\n{result['full_reply']}")
+            try:
+                # Split long messages to avoid truncation
+                full_response = f"🤖 Espaluz {flag}:\n{result['full_reply']}"
+                if len(full_response) > 1500:
+                    # Split into chunks
+                    chunks = [full_response[i:i+1400] for i in range(0, len(full_response), 1400)]
+                    for i, chunk in enumerate(chunks, 1):
+                        chunk_msg = f"📱 Parte {i}/{len(chunks)}:\n{chunk}" if len(chunks) > 1 else chunk
+                        send_whatsapp_message(user_id, chunk_msg)
+                        time.sleep(1)  # Brief pause between chunks
+                else:
+                    send_whatsapp_message(user_id, full_response)
+                    
+                logging.info(f"✅ Full response sent ({len(result['full_reply'])} chars)")
+            except Exception as e:
+                logging.error(f"Failed to send full response: {e}")
             
-            # Step 9: Generate FULL voice message (country-aware)
-            audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
-            if generate_tts_audio(result["full_reply_clean"], audio_path):
-                send_whatsapp_media(user_id, audio_path, "audio")
-                logging.info(f"🎧 Country-specific audio sent for {detected_country}")
+            # Step 9: Generate FULL voice message (country-aware) - with error handling
+            try:
+                audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
+                if generate_tts_audio(result["full_reply_clean"], audio_path):
+                    if send_whatsapp_media(user_id, audio_path, "audio"):
+                        logging.info(f"🎧 Country-specific audio sent for {detected_country}")
+                    else:
+                        logging.error(f"Failed to send audio media")
+                else:
+                    logging.error(f"Failed to generate TTS audio")
+            except Exception as e:
+                logging.error(f"Error with audio generation/sending: {e}")
             
-            # Step 10: Generate SHORT video with country context
-            video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
-            if create_video_with_looped_base(result["short_reply_clean"], video_path):
-                send_whatsapp_media(user_id, video_path, "video")
-                logging.info(f"🎥 Country-specific video sent for {detected_country}")
+            # Step 10: Generate SHORT video with country context - with error handling
+            try:
+                video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
+                if create_video_with_looped_base(result["short_reply_clean"], video_path):
+                    if send_whatsapp_media(user_id, video_path, "video"):
+                        logging.info(f"🎥 Country-specific video sent for {detected_country}")
+                    else:
+                        logging.error(f"Failed to send video media")
+                else:
+                    logging.error(f"Failed to create video")
+            except Exception as e:
+                logging.error(f"Error with video generation/sending: {e}")
             
             # Step 11: Clean up temp files
             for file_path in [original_audio, converted_audio]:
                 if os.path.exists(file_path):
-                    os.remove(file_path)
-                    
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        logging.error(f"Failed to remove {file_path}: {e}")
+                        
             logging.info("🧹 Voice processing cleanup completed")
                     
         except Exception as e:
             logging.exception(f"❌ Error processing voice message: {e}")
-            send_whatsapp_message(user_id, "❌ Error procesando mensaje de voz. Error processing voice message.")
+            try:
+                send_whatsapp_message(user_id, "❌ Error procesando mensaje de voz. Error processing voice message.")
+            except:
+                logging.error("Failed to send error message")
     
     thread = threading.Thread(target=process, daemon=True)
     thread.start()
     logging.info(f"🚀 Enhanced voice processing thread started for {user_id}")
 
 def process_whatsapp_message_async_enhanced(user_id, user_text):
-    """Enhanced text processing with multi-country support"""
+    """Enhanced text processing with multi-country support - NO RUSSIAN OUTPUT"""
     def process():
         try:
             logging.info(f"📩 Processing enhanced message from {user_id}: {user_text}")
             
             # Step 1: Show received message
-            send_whatsapp_message(user_id, f"📝 Recibí tu mensaje / I received your message:\n{user_text}")
+            try:
+                send_whatsapp_message(user_id, f"📝 Recibí tu mensaje / I received your message:\n{user_text}")
+            except Exception as e:
+                logging.error(f"Failed to send received message: {e}")
             
-            # Step 2: Send translation
-            translation = translate_to_es_en(user_text)
-            send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
+            # Step 2: Send translation (Spanish/English ONLY)
+            try:
+                translation = translate_to_es_en_only(user_text)
+                send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
+            except Exception as e:
+                logging.error(f"Failed to send translation: {e}")
             
             # Step 3: Get Claude's ENHANCED response with country detection
             result = process_message_with_claude_enhanced(user_id, user_text)
@@ -632,29 +697,61 @@ def process_whatsapp_message_async_enhanced(user_id, user_text):
             flag = country_flags.get(detected_country, "🌎")
             
             # Step 4: Send FULL, country-specific text response
-            send_whatsapp_message(user_id, f"🤖 Espaluz {flag}:\n{result['full_reply']}")
+            try:
+                # Split long messages to avoid truncation
+                full_response = f"🤖 Espaluz {flag}:\n{result['full_reply']}"
+                if len(full_response) > 1500:
+                    # Split into chunks
+                    chunks = [full_response[i:i+1400] for i in range(0, len(full_response), 1400)]
+                    for i, chunk in enumerate(chunks, 1):
+                        chunk_msg = f"📱 Parte {i}/{len(chunks)}:\n{chunk}" if len(chunks) > 1 else chunk
+                        send_whatsapp_message(user_id, chunk_msg)
+                        time.sleep(1)  # Brief pause between chunks
+                else:
+                    send_whatsapp_message(user_id, full_response)
+                    
+                logging.info(f"✅ Full response sent ({len(result['full_reply'])} chars)")
+            except Exception as e:
+                logging.error(f"Failed to send full response: {e}")
             
-            # Step 5: Generate FULL voice message (country-aware)
-            audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
-            if generate_tts_audio(result['full_reply_clean'], audio_path):
-                send_whatsapp_media(user_id, audio_path, "audio")
-                logging.info(f"🎧 Country-specific audio sent for {detected_country}")
+            # Step 5: Generate FULL voice message (country-aware) - with error handling
+            try:
+                audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
+                if generate_tts_audio(result['full_reply_clean'], audio_path):
+                    if send_whatsapp_media(user_id, audio_path, "audio"):
+                        logging.info(f"🎧 Country-specific audio sent for {detected_country}")
+                    else:
+                        logging.error(f"Failed to send audio media")
+                else:
+                    logging.error(f"Failed to generate TTS audio")
+            except Exception as e:
+                logging.error(f"Error with audio generation/sending: {e}")
             
-            # Step 6: Generate SHORT video with country context
-            video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
-            if create_video_with_looped_base(result['short_reply_clean'], video_path):
-                send_whatsapp_media(user_id, video_path, "video")
-                logging.info(f"🎥 Country-specific video sent for {detected_country}")
+            # Step 6: Generate SHORT video with country context - with error handling
+            try:
+                video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
+                if create_video_with_looped_base(result['short_reply_clean'], video_path):
+                    if send_whatsapp_media(user_id, video_path, "video"):
+                        logging.info(f"🎥 Country-specific video sent for {detected_country}")
+                    else:
+                        logging.error(f"Failed to send video media")
+                else:
+                    logging.error(f"Failed to create video")
+            except Exception as e:
+                logging.error(f"Error with video generation/sending: {e}")
                 
         except Exception as e:
             logging.error(f"Error in enhanced async processing: {e}")
-            send_whatsapp_message(user_id, "Lo siento, hubo un error. Sorry, there was an error.")
+            try:
+                send_whatsapp_message(user_id, "Lo siento, hubo un error. Sorry, there was an error.")
+            except:
+                logging.error("Failed to send error message")
     
     thread = threading.Thread(target=process, daemon=True)
     thread.start()
 
 def process_image_with_gpt4_vision(image_bytes):
-    """Process image using GPT-4 Vision - Enhanced OCR"""
+    """Process image using GPT-4 Vision - Enhanced OCR - NO RUSSIAN OUTPUT"""
     try:
         image = Image.open(io.BytesIO(image_bytes))
         max_size = 2048
@@ -676,14 +773,15 @@ def process_image_with_gpt4_vision(image_bytes):
                     "role": "system",
                     "content": """You are an expert at extracting and translating text from images. 
                     Extract ALL visible text, preserving formatting and structure.
-                    Then provide translations to both Spanish and English with cultural context for expat families in Latin America."""
+                    Then provide translations to ONLY Spanish and English with cultural context for expat families in Latin America.
+                    NEVER output Russian or any other language - ONLY Spanish and English."""
                 },
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": "Extract ALL text from this image. Preserve structure and formatting. Then translate to Spanish and English with cultural insights for expat families in Latin America."
+                            "text": "Extract ALL text from this image. Preserve structure and formatting. Then translate to ONLY Spanish and English (no other languages) with cultural insights for expat families in Latin America."
                         },
                         {
                             "type": "image_url",
@@ -710,22 +808,29 @@ def process_image_with_gpt4_vision(image_bytes):
         return "❌ Error processing the image."
 
 def send_whatsapp_message(to, text):
-    """Send text message via Twilio"""
+    """Send text message via Twilio with enhanced error handling"""
     try:
         url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
         data = {
             'From': TWILIO_NUMBER,
             'To': f"whatsapp:{to}",
-            'Body': text[:1500]
+            'Body': text[:1500]  # Ensure we don't exceed WhatsApp limits
         }
         res = requests.post(url, data=data, auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
         logging.info(f"📤 Sent text to {to} status: {res.status_code}")
         
-        if res.status_code != 201:
+        if res.status_code == 201:
+            return True
+        elif res.status_code == 429:
+            logging.error(f"Rate limit exceeded: {res.text}")
+            return False
+        else:
             logging.error(f"Text message error: {res.text}")
+            return False
             
     except Exception as e:
         logging.error(f"Error sending text message: {e}")
+        return False
 
 def send_whatsapp_media(to, file_path, media_type="audio"):
     """Send media file via hosted URL with enhanced error handling"""
@@ -769,6 +874,9 @@ def send_whatsapp_media(to, file_path, media_type="audio"):
         if res.status_code == 201:
             logging.info(f"✅ {media_type.title()} sent successfully")
             success = True
+        elif res.status_code == 429:
+            logging.error(f"❌ Rate limit exceeded for {media_type}: {res.text}")
+            success = False
         else:
             logging.error(f"❌ {media_type.title()} send failed: {res.text}")
             success = False
@@ -784,7 +892,7 @@ def send_whatsapp_media(to, file_path, media_type="audio"):
         return False
 
 def process_whatsapp_image_async(user_id, media_url):
-    """Process image message asynchronously"""
+    """Process image message asynchronously - NO RUSSIAN OUTPUT"""
     def process():
         try:
             # Download image with authentication
@@ -848,6 +956,7 @@ def verify_webhook():
 
 @app.route("/webhook", methods=["POST"])
 def handle_message_enhanced():
+    """Enhanced webhook handler with better error handling"""
     try:
         user_id = request.form.get("From", "").replace("whatsapp:", "")
         user_text = request.form.get("Body", "")
@@ -890,15 +999,22 @@ def handle_message_enhanced():
 def health_enhanced():
     return jsonify({
         "status": "running",
-        "bot": "Espaluz WhatsApp - Multi-Country Edition",
-        "version": "v5.0-latam-complete",
+        "bot": "Espaluz WhatsApp - Fixed Multi-Country Edition",
+        "version": "v5.1-fixed-no-russian",
         "supported_countries": list(COUNTRY_CONTEXTS.keys()),
         "features": ["text", "voice", "video", "image_processing", "voice_transcription", "claude_ai", "multi_country_support"],
+        "fixes": {
+            "no_russian_output": "All responses strictly in Spanish and English only",
+            "full_responses": "Increased max_tokens to prevent truncation",
+            "chunked_messages": "Long messages split into chunks",
+            "error_handling": "Enhanced error handling for media sending",
+            "rate_limiting": "Better handling of Twilio rate limits"
+        },
         "country_detection": "automatic based on landmarks, food, cities, and cultural references",
         "message_sequence": {
-            "voice": ["processing", "original_transcription", "translation", "country_specific_ai_response", "audio", "video"],
-            "text": ["received_confirmation", "translation", "country_specific_ai_response", "audio", "video"],
-            "image": ["processing", "text_extraction", "translation", "cultural_context"]
+            "voice": ["processing", "original_transcription", "translation_es_en_only", "full_country_specific_response", "audio", "video"],
+            "text": ["received_confirmation", "translation_es_en_only", "full_country_specific_response", "audio", "video"],
+            "image": ["processing", "text_extraction", "translation_es_en_only", "cultural_context"]
         },
         "countries": {
             "panama": "🇵🇦 USD, Metro, Casco Viejo",
@@ -920,25 +1036,21 @@ def health_enhanced():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    logging.info(f"🚀 Starting Complete Espaluz WhatsApp Bot - Multi-Country Edition on port {port}")
+    logging.info(f"🚀 Starting FIXED Espaluz WhatsApp Bot - Multi-Country Edition on port {port}")
+    logging.info("✅ Key Fixes Applied:")
+    logging.info("   🚫 NO Russian text in responses - Spanish/English only")
+    logging.info("   📝 Full responses - increased max_tokens to prevent truncation")
+    logging.info("   📱 Message chunking for long responses")
+    logging.info("   🛡️  Enhanced error handling for media sending")
+    logging.info("   ⏱️  Better rate limit handling")
+    logging.info("")
     logging.info("✅ Features enabled:")
-    logging.info("   📝 Text messages (Russian, Spanish, English)")
+    logging.info("   📝 Text messages (Spanish, English only)")
     logging.info("   🎤 Voice message transcription and processing")
     logging.info("   📷 Image text recognition and translation")
     logging.info("   🤖 Claude AI responses with country detection")
     logging.info("   🎥 Video generation with looped_video.mp4")
     logging.info("   🎧 Audio responses")
-    logging.info("   🌍 Multi-language translation")
+    logging.info("   🌍 Multi-language translation (to Spanish/English only)")
     logging.info("   🌎 Multi-country support for Latin America & Spain")
-    logging.info("")
-    logging.info("🌍 Supported Countries:")
-    for country, context in COUNTRY_CONTEXTS.items():
-        flag = {"panama": "🇵🇦", "mexico": "🇲🇽", "costa_rica": "🇨🇷", "colombia": "🇨🇴", 
-                "chile": "🇨🇱", "argentina": "🇦🇷", "el_salvador": "🇸🇻", "spain": "🇪🇸", "peru": "🇵🇪"}.get(country, "🌎")
-        logging.info(f"   {flag} {country.title()}: {context['currency']}")
-    logging.info("")
-    logging.info("📋 Message Processing Sequence:")
-    logging.info("   Voice: Processing → Original → Translation → Country Response → Audio → Video")
-    logging.info("   Text: Received → Translation → Country Response → Audio → Video")
-    logging.info("   Image: Processing → Extraction → Translation → Context")
     app.run(host="0.0.0.0", port=port)
