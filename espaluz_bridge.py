@@ -170,7 +170,6 @@ def transcribe_audio_with_openai(audio_file_path):
                 files={"file": ("audio.mp3", f, "audio/mpeg")},
                 data={
                     "model": "whisper-1",
-                    "language": "es",  # Hint that we expect Spanish
                     "response_format": "json"
                 },
                 timeout=120  # Increased timeout for larger files
@@ -197,8 +196,122 @@ def transcribe_audio_with_openai(audio_file_path):
         logging.error(f"Transcription error: {e}")
         return None
 
+def process_message_with_claude(user_id, message_text):
+    """Process message using Claude API directly without importing main.py"""
+    try:
+        headers = {
+            "x-api-key": CLAUDE_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        
+        system_prompt = f"""You are Espaluz, a bilingual emotionally intelligent AI language tutor for a Russian expat family in Panama.
+
+Your answer should have TWO PARTS:
+
+1️⃣ A full, thoughtful bilingual response (using both Spanish and English):
+   - Respond naturally to the message
+   - Be emotionally aware, friendly, and motivating  
+   - Include relevant Spanish learning or cultural context from Panama
+   - Keep it concise but helpful (under 800 characters)
+
+2️⃣ A second short block inside [VIDEO SCRIPT START] ... [VIDEO SCRIPT END] for video:
+   - Must be 2 to 4 concise sentences MAX
+   - Use both Spanish and English
+   - Tone: warm, clear, and simple for spoken delivery
+   
+Example:
+[VIDEO SCRIPT START]
+¡Hola! Hoy es un gran día para aprender español.
+Hello! Today is a great day to learn Spanish.
+[VIDEO SCRIPT END]
+
+Today is {datetime.now().strftime('%Y-%m-%d')}."""
+
+        messages = [{"role": "user", "content": message_text}]
+        data = {
+            "model": "claude-sonnet-4-20250514",
+            "messages": messages,
+            "system": system_prompt,
+            "max_tokens": 800,
+            "temperature": 0.7
+        }
+        
+        r = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
+        
+        if r.status_code == 200:
+            reply = r.json()["content"][0]["text"]
+            full_reply = reply.strip()
+            short_reply = extract_video_script(full_reply)
+            
+            # Clean text for speech
+            full_reply_clean = clean_text_for_speech(full_reply)
+            short_reply_clean = clean_text_for_speech(short_reply)
+            
+            return {
+                "full_reply": full_reply,
+                "short_reply": short_reply,
+                "full_reply_clean": full_reply_clean,
+                "short_reply_clean": short_reply_clean
+            }
+        else:
+            logging.error(f"Claude API error: {r.status_code} - {r.text}")
+            return fallback_response(message_text)
+            
+    except Exception as e:
+        logging.error(f"Claude error: {e}")
+        return fallback_response(message_text)
+
+def fallback_response(message_text):
+    """Fallback response when Claude fails"""
+    try:
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+        messages = [
+            {"role": "system", "content": """You are Espaluz, a bilingual Spanish-English tutor. 
+            
+Respond with:
+1) A helpful bilingual response (keep under 800 characters)
+2) Then add: [VIDEO SCRIPT START] Short Spanish and English phrases [VIDEO SCRIPT END]"""},
+            {"role": "user", "content": message_text}
+        ]
+        data = {
+            "model": "gpt-4",
+            "messages": messages,
+            "max_tokens": 600
+        }
+        r = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
+        
+        if r.status_code == 200:
+            full = r.json()["choices"][0]["message"]["content"]
+            full_reply = full.strip()
+            short_reply = extract_video_script(full_reply)
+            
+            return {
+                "full_reply": full_reply,
+                "short_reply": short_reply,
+                "full_reply_clean": clean_text_for_speech(full_reply),
+                "short_reply_clean": clean_text_for_speech(short_reply)
+            }
+        else:
+            fallback_text = "Lo siento, hay un problema técnico. Sorry, there's a technical issue."
+            return {
+                "full_reply": fallback_text,
+                "short_reply": "Lo siento. Sorry.",
+                "full_reply_clean": fallback_text,
+                "short_reply_clean": "Lo siento. Sorry."
+            }
+    except Exception as e:
+        logging.error(f"Fallback error: {e}")
+        fallback_text = "Lo siento, hay un problema técnico. Sorry, there's a technical issue."
+        return {
+            "full_reply": fallback_text,
+            "short_reply": "Lo siento. Sorry.",
+            "full_reply_clean": fallback_text,
+            "short_reply_clean": "Lo siento. Sorry."
+        }
+
 def process_whatsapp_voice_async(user_id, media_url):
-    """Process voice message asynchronously with proper error handling"""
+    """Process voice message asynchronously with proper message sequence"""
     def process():
         try:
             logging.info(f"🎤 Starting voice processing for {user_id}")
@@ -206,31 +319,26 @@ def process_whatsapp_voice_async(user_id, media_url):
             # Send initial processing message
             send_whatsapp_message(user_id, "🎤 Procesando mensaje de voz... / Processing voice message...")
             
-            # CRITICAL FIX: Get media URL with proper authentication
+            # Step 1: Download and convert audio
             logging.info(f"🔗 Getting authenticated media URL from: {media_url}")
-            
-            # Step 1: Get the actual media URL with Twilio authentication
             auth = HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
             
-            # Download the actual audio content with authentication
             logging.info(f"📥 Downloading audio from authenticated URL...")
             download_response = requests.get(media_url, auth=auth, timeout=60)
             
             if download_response.status_code != 200:
                 logging.error(f"Audio download failed: {download_response.status_code}")
-                logging.error(f"Download response: {download_response.text}")
                 send_whatsapp_message(user_id, "❌ No pude descargar el audio. Could not download audio.")
                 return
             
             logging.info(f"✅ Audio downloaded successfully, size: {len(download_response.content)} bytes")
             
-            # Validate that we actually got audio content
             if len(download_response.content) < 100:
                 logging.error(f"Downloaded content too small: {len(download_response.content)} bytes")
                 send_whatsapp_message(user_id, "❌ Archivo de audio demasiado pequeño. Audio file too small.")
                 return
             
-            # Step 2: Save downloaded audio with proper filename
+            # Step 2: Save and convert audio
             timestamp = int(time.time())
             original_audio = f"/tmp/voice_original_{timestamp}.ogg"
             converted_audio = f"/tmp/voice_converted_{timestamp}.mp3"
@@ -240,13 +348,12 @@ def process_whatsapp_voice_async(user_id, media_url):
             
             logging.info(f"💾 Audio saved to: {original_audio}")
             
-            # Verify file was written correctly
             if not os.path.exists(original_audio) or os.path.getsize(original_audio) < 100:
                 logging.error(f"Failed to save audio file properly")
                 send_whatsapp_message(user_id, "❌ Error guardando archivo de audio. Error saving audio file.")
                 return
             
-            # Step 3: Convert audio format for Whisper (enhanced conversion)
+            # Step 3: Convert audio format for Whisper
             logging.info("🔄 Converting audio format for transcription...")
             if not convert_audio_format_enhanced(original_audio, converted_audio):
                 send_whatsapp_message(user_id, "❌ Error convirtiendo audio. Error converting audio.")
@@ -254,7 +361,7 @@ def process_whatsapp_voice_async(user_id, media_url):
             
             logging.info(f"✅ Audio converted to: {converted_audio}")
             
-            # Step 4: Transcribe audio using the same function as Telegram
+            # Step 4: Transcribe audio
             logging.info("🗣️ Transcribing with Whisper...")
             transcription = transcribe_audio_with_openai(converted_audio)
             
@@ -265,37 +372,22 @@ def process_whatsapp_voice_async(user_id, media_url):
             
             logging.info(f"✅ Transcription successful: {transcription}")
             
-            # Step 5: Send transcription
-            send_whatsapp_message(user_id, f"🗣️ Transcripción / Transcription:\n{transcription}")
+            # Step 5: FIRST - Send the original transcription in the language you spoke
+            send_whatsapp_message(user_id, f"🗣️ Dijiste / You said:\n{transcription}")
             
-            # Step 6: Get translation
+            # Step 6: SECOND - Get and send translation to Spanish and English
             logging.info("🌐 Translating...")
             translation = translate_to_es_en(transcription)
             send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
             
-            # Step 7: Process transcription as text message using the same logic as Telegram
+            # Step 7: THIRD - Process with Claude and send response
             logging.info("🤖 Processing with Claude...")
-            
-            # Create mock user info for processing (similar to Telegram bot)
-            user_info = {
-                "id": user_id,
-                "first_name": f"WhatsApp_{user_id[-4:]}",
-                "username": None,
-                "language_code": "es"
-            }
-            
-            chat_info = {
-                "id": user_id,
-                "type": "private"
-            }
-            
-            # Import and use the same processing function as main.py
-            from main import process_message_internal
-            result = process_message_internal(user_id, transcription, user_info, chat_info)
+            result = process_message_with_claude(user_id, transcription)
             
             # Send Claude's response
             send_whatsapp_message(user_id, f"🤖 Espaluz:\n{result['full_reply']}")
             
+            # Step 8: Generate and send multimedia responses
             # Generate and send audio response
             audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
             if generate_tts_audio(result["full_reply_clean"], audio_path):
@@ -308,7 +400,7 @@ def process_whatsapp_voice_async(user_id, media_url):
                 send_whatsapp_media(user_id, video_path, "video")
                 logging.info("🎥 Video response sent")
             
-            # Clean up temp files
+            # Step 9: Clean up temp files
             for file_path in [original_audio, converted_audio]:
                 if os.path.exists(file_path):
                     os.remove(file_path)
@@ -379,86 +471,6 @@ def process_image_with_gpt4_vision(image_bytes):
     except Exception as e:
         logging.error(f"Image processing error: {e}")
         return "❌ Error processing the image."
-
-def ask_claude(user_text):
-    try:
-        headers = {
-            "x-api-key": CLAUDE_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-        }
-        
-        system_prompt = f"""You are Espaluz, a bilingual emotionally intelligent AI language tutor for a Russian expat family in Panama.
-
-Your answer should have TWO PARTS:
-
-1️⃣ A full, thoughtful bilingual response (using both Spanish and English):
-   - Respond naturally to the message
-   - Be emotionally aware, friendly, and motivating  
-   - Include relevant Spanish learning or cultural context from Panama
-   - Keep it concise but helpful (under 800 characters)
-
-2️⃣ A second short block inside [VIDEO SCRIPT START] ... [VIDEO SCRIPT END] for video:
-   - Must be 2 to 4 concise sentences MAX
-   - Use both Spanish and English
-   - Tone: warm, clear, and simple for spoken delivery
-   
-Example:
-[VIDEO SCRIPT START]
-¡Hola! Hoy es un gran día para aprender español.
-Hello! Today is a great day to learn Spanish.
-[VIDEO SCRIPT END]
-
-Today is {datetime.now().strftime('%Y-%m-%d')}."""
-
-        messages = [{"role": "user", "content": user_text}]
-        data = {
-            "model": "claude-sonnet-4-20250514",
-            "messages": messages,
-            "system": system_prompt,
-            "max_tokens": 800,
-            "temperature": 0.7
-        }
-        
-        r = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
-        
-        if r.status_code == 200:
-            reply = r.json()["content"][0]["text"]
-            return reply.strip(), extract_video_script(reply.strip())
-        else:
-            logging.error(f"Claude API error: {r.status_code} - {r.text}")
-            return fallback_openai(user_text)
-            
-    except Exception as e:
-        logging.error(f"Claude error: {e}")
-        return fallback_openai(user_text)
-
-def fallback_openai(user_text):
-    try:
-        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-        messages = [
-            {"role": "system", "content": """You are Espaluz, a bilingual Spanish-English tutor. 
-            
-Respond with:
-1) A helpful bilingual response (keep under 800 characters)
-2) Then add: [VIDEO SCRIPT START] Short Spanish and English phrases [VIDEO SCRIPT END]"""},
-            {"role": "user", "content": user_text}
-        ]
-        data = {
-            "model": "gpt-4",
-            "messages": messages,
-            "max_tokens": 600
-        }
-        r = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
-        
-        if r.status_code == 200:
-            full = r.json()["choices"][0]["message"]["content"]
-            return full, extract_video_script(full)
-        else:
-            return "Lo siento, hay un problema técnico. Sorry, there's a technical issue.", "Lo siento. Sorry."
-    except Exception as e:
-        logging.error(f"OpenAI fallback error: {e}")
-        return "Lo siento, hay un problema técnico. Sorry, there's a technical issue.", "Lo siento. Sorry."
 
 def send_whatsapp_message(to, text):
     """Send text message via Twilio"""
@@ -535,29 +547,31 @@ def send_whatsapp_media(to, file_path, media_type="audio"):
         return False
 
 def process_whatsapp_message_async(user_id, user_text):
-    """Process message and send multimedia response asynchronously"""
+    """Process message and send multimedia response asynchronously with proper sequence"""
     def process():
         try:
             logging.info(f"📩 Processing message from {user_id}: {user_text}")
             
-            # Get translation first
+            # Step 1: Show original message
+            send_whatsapp_message(user_id, f"📝 Recibí tu mensaje / I received your message:\n{user_text}")
+            
+            # Step 2: Get and send translation
             translation = translate_to_es_en(user_text)
             send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
             
-            # Get Claude response
-            full_reply, video_script = ask_claude(user_text)
+            # Step 3: Get Claude response
+            result = process_message_with_claude(user_id, user_text)
             
-            # Send text response
-            send_whatsapp_message(user_id, f"🤖 Espaluz:\n{full_reply}")
+            # Step 4: Send text response
+            send_whatsapp_message(user_id, f"🤖 Espaluz:\n{result['full_reply']}")
             
-            # Generate and send audio
+            # Step 5: Send multimedia
             audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
-            if generate_tts_audio(full_reply, audio_path):
+            if generate_tts_audio(result['full_reply_clean'], audio_path):
                 send_whatsapp_media(user_id, audio_path, "audio")
             
-            # Generate and send video
             video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
-            if create_simple_video(video_script, video_path):
+            if create_simple_video(result['short_reply_clean'], video_path):
                 send_whatsapp_media(user_id, video_path, "video")
                 
         except Exception as e:
@@ -683,8 +697,13 @@ def health():
     return jsonify({
         "status": "running",
         "bot": "Espaluz WhatsApp Production",
-        "version": "v4.0-complete",
+        "version": "v4.0-complete-final",
         "features": ["text", "voice", "video", "image_processing", "voice_transcription", "claude_ai"],
+        "message_sequence": {
+            "voice": ["processing", "original_transcription", "translation", "ai_response", "audio", "video"],
+            "text": ["received_confirmation", "translation", "ai_response", "audio", "video"],
+            "image": ["processing", "text_extraction", "translation", "cultural_context"]
+        },
         "endpoints": {
             "webhook": "/webhook",
             "media": "/media/<filename>",
@@ -703,4 +722,9 @@ if __name__ == "__main__":
     logging.info("   🎥 Video generation")
     logging.info("   🎧 Audio responses")
     logging.info("   🌍 Multi-language translation")
+    logging.info("")
+    logging.info("📋 Message Processing Sequence:")
+    logging.info("   Voice: Processing → Original → Translation → Response → Audio → Video")
+    logging.info("   Text: Received → Translation → Response → Audio → Video")
+    logging.info("   Image: Processing → Extraction → Translation → Context")
     app.run(host="0.0.0.0", port=port)
