@@ -133,7 +133,8 @@ COUNTRY_CONTEXTS = {
 }
 
 def clean_text_for_speech(text: str) -> str:
-    """Remove punctuation marks and formatting for natural speech"""
+    """Remove punctuation marks and formatting for natural speech - keep FULL content"""
+    # Remove formatting but keep all text content
     text = re.sub(r'\*+([^*]+)\*+', r'\1', text)  # Remove asterisks
     text = re.sub(r'_+([^_]+)_+', r'\1', text)    # Remove underscores
     text = re.sub(r'`+([^`]+)`+', r'\1', text)    # Remove backticks
@@ -144,6 +145,11 @@ def clean_text_for_speech(text: str) -> str:
     text = re.sub(r'[0-9]️⃣', '', text)            # Remove emoji numbers
     text = re.sub(r'[#@\[\](){}<>]', '', text)    # Remove symbols
     text = re.sub(r'\s+', ' ', text)              # Clean whitespace
+    
+    # Remove the video script section from the FULL audio (keep only main content)
+    if "[VIDEO SCRIPT START]" in text:
+        text = text.split("[VIDEO SCRIPT START]")[0].strip()
+    
     return text.strip()
 
 def extract_video_script(full_response):
@@ -164,13 +170,81 @@ def extract_video_script(full_response):
     return "¡Hola familia! Hello family! ¡Gracias por practicar conmigo! Thank you for practicing with me!"
 
 def generate_tts_audio(text, filename):
+    """Generate TTS audio with FULL text content - no truncation"""
     try:
         cleaned = clean_text_for_speech(text)
-        if len(cleaned) > 800:
-            cleaned = cleaned[:800] + "..."
-        tts = gTTS(text=cleaned, lang="es", slow=False)
-        tts.save(filename)
-        return os.path.exists(filename)
+        
+        # Remove the arbitrary 800 character limit - let it be the full response
+        # We want the COMPLETE audio response, not truncated
+        logging.info(f"🎵 Generating TTS for {len(cleaned)} characters of text")
+        
+        # For very long texts, we can use multiple TTS calls and concatenate
+        if len(cleaned) > 4000:  # gTTS has limits around 5000 chars
+            # Split into chunks at sentence boundaries
+            sentences = re.split(r'[.!?]+', cleaned)
+            audio_files = []
+            
+            current_chunk = ""
+            chunk_num = 0
+            
+            for sentence in sentences:
+                if len(current_chunk + sentence) < 4000:
+                    current_chunk += sentence + ". "
+                else:
+                    # Process current chunk
+                    if current_chunk.strip():
+                        chunk_file = f"/tmp/tts_chunk_{chunk_num}.mp3"
+                        tts = gTTS(text=current_chunk.strip(), lang="es", slow=False)
+                        tts.save(chunk_file)
+                        audio_files.append(chunk_file)
+                        chunk_num += 1
+                    
+                    # Start new chunk
+                    current_chunk = sentence + ". "
+            
+            # Process final chunk
+            if current_chunk.strip():
+                chunk_file = f"/tmp/tts_chunk_{chunk_num}.mp3"
+                tts = gTTS(text=current_chunk.strip(), lang="es", slow=False)
+                tts.save(chunk_file)
+                audio_files.append(chunk_file)
+            
+            # Concatenate audio files using ffmpeg
+            if len(audio_files) > 1:
+                # Create input list file for ffmpeg
+                input_list = "/tmp/audio_list.txt"
+                with open(input_list, 'w') as f:
+                    for audio_file in audio_files:
+                        f.write(f"file '{audio_file}'\n")
+                
+                # Concatenate using ffmpeg
+                cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", input_list, "-c", "copy", filename]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                # Clean up chunk files
+                for audio_file in audio_files:
+                    if os.path.exists(audio_file):
+                        os.remove(audio_file)
+                os.remove(input_list)
+                
+                if result.returncode == 0:
+                    logging.info(f"✅ Multi-chunk TTS audio created: {filename}")
+                    return os.path.exists(filename)
+                else:
+                    logging.error(f"❌ Audio concatenation failed: {result.stderr}")
+                    return False
+            else:
+                # Single chunk, just rename it
+                if audio_files:
+                    subprocess.run(["mv", audio_files[0], filename])
+                    return os.path.exists(filename)
+        else:
+            # Single TTS call for shorter text
+            tts = gTTS(text=cleaned, lang="es", slow=False)
+            tts.save(filename)
+            logging.info(f"✅ Single TTS audio created: {filename}")
+            return os.path.exists(filename)
+            
     except Exception as e:
         logging.error(f"TTS error: {e}")
         return False
@@ -621,9 +695,19 @@ def process_whatsapp_voice_async_enhanced(user_id, media_url):
             # Step 9: Generate FULL voice message (country-aware) - with error handling
             try:
                 audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
-                if generate_tts_audio(result["full_reply_clean"], audio_path):
+                
+                # Use the FULL reply for audio, not the cleaned version
+                full_audio_text = result["full_reply"]
+                
+                # Remove the video script part from the audio (we only want the main response)
+                if "[VIDEO SCRIPT START]" in full_audio_text:
+                    full_audio_text = full_audio_text.split("[VIDEO SCRIPT START]")[0].strip()
+                
+                logging.info(f"🎵 Generating FULL audio with {len(full_audio_text)} characters")
+                
+                if generate_tts_audio(full_audio_text, audio_path):
                     if send_whatsapp_media(user_id, audio_path, "audio"):
-                        logging.info(f"🎧 Country-specific audio sent for {detected_country}")
+                        logging.info(f"🎧 FULL country-specific audio sent for {detected_country} ({len(full_audio_text)} chars)")
                     else:
                         logging.error(f"Failed to send audio media")
                 else:
@@ -717,9 +801,19 @@ def process_whatsapp_message_async_enhanced(user_id, user_text):
             # Step 5: Generate FULL voice message (country-aware) - with error handling
             try:
                 audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
-                if generate_tts_audio(result['full_reply_clean'], audio_path):
+                
+                # Use the FULL reply for audio, not the cleaned version
+                full_audio_text = result["full_reply"]
+                
+                # Remove the video script part from the audio (we only want the main response)
+                if "[VIDEO SCRIPT START]" in full_audio_text:
+                    full_audio_text = full_audio_text.split("[VIDEO SCRIPT START]")[0].strip()
+                
+                logging.info(f"🎵 Generating FULL audio with {len(full_audio_text)} characters")
+                
+                if generate_tts_audio(full_audio_text, audio_path):
                     if send_whatsapp_media(user_id, audio_path, "audio"):
-                        logging.info(f"🎧 Country-specific audio sent for {detected_country}")
+                        logging.info(f"🎧 FULL country-specific audio sent for {detected_country} ({len(full_audio_text)} chars)")
                     else:
                         logging.error(f"Failed to send audio media")
                 else:
