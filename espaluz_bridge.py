@@ -174,80 +174,83 @@ def send_whatsapp_message(to, text):
     except Exception as e:
         logging.error(f"Error sending text message: {e}")
 
-def send_whatsapp_audio(to, audio_file_path):
-    """Send audio file via Twilio Media API"""
+def upload_to_temp_hosting(file_path):
+    """Upload file to temporary hosting service and return public URL"""
     try:
-        # Upload to Twilio Media first
-        upload_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Media.json"
-        
-        with open(audio_file_path, 'rb') as f:
-            files = {'file': f}
-            upload_response = requests.post(
-                upload_url, 
-                files=files, 
-                auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            )
-        
-        if upload_response.status_code == 201:
-            media_url = upload_response.json()['uri']
-            media_url = f"https://api.twilio.com{media_url}"
+        # Use a simple file hosting service like 0x0.st or file.io
+        with open(file_path, 'rb') as f:
+            response = requests.post('https://0x0.st', files={'file': f})
             
-            # Send message with media
-            message_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
-            data = {
-                'From': TWILIO_NUMBER,
-                'To': f"whatsapp:{to}",
-                'MediaUrl': media_url
-            }
-            
-            response = requests.post(
-                message_url, 
-                data=data, 
-                auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            )
-            logging.info(f"🎧 Sent audio to {to} status: {response.status_code}")
-            
+        if response.status_code == 200:
+            url = response.text.strip()
+            logging.info(f"📤 Uploaded to temp host: {url}")
+            return url
         else:
-            logging.error(f"Audio upload failed: {upload_response.text}")
+            logging.error(f"Upload failed: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Upload error: {e}")
+        return None
+
+def send_whatsapp_audio(to, audio_file_path):
+    """Send audio file via Twilio MediaUrl"""
+    try:
+        # Upload file to temporary hosting
+        media_url = upload_to_temp_hosting(audio_file_path)
+        
+        if not media_url:
+            logging.error("Failed to upload audio file")
+            return
+            
+        message_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+        data = {
+            'From': TWILIO_NUMBER,
+            'To': f"whatsapp:{to}",
+            'Body': "🎧 Audio message",  # Body is required
+            'MediaUrl': media_url
+        }
+        
+        response = requests.post(
+            message_url, 
+            data=data, 
+            auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        )
+        
+        logging.info(f"🎧 Sent audio to {to} status: {response.status_code}")
+        if response.status_code != 201:
+            logging.error(f"Audio send failed: {response.text}")
             
     except Exception as e:
         logging.error(f"Error sending audio: {e}")
 
 def send_whatsapp_video(to, video_file_path):
-    """Send video file via Twilio Media API"""
+    """Send video file via Twilio MediaUrl"""
     try:
-        # Upload to Twilio Media first
-        upload_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Media.json"
+        # Upload file to temporary hosting
+        media_url = upload_to_temp_hosting(video_file_path)
         
-        with open(video_file_path, 'rb') as f:
-            files = {'file': f}
-            upload_response = requests.post(
-                upload_url, 
-                files=files, 
-                auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            )
+        if not media_url:
+            logging.error("Failed to upload video file")
+            return
+            
+        message_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+        data = {
+            'From': TWILIO_NUMBER,
+            'To': f"whatsapp:{to}",
+            'Body': "🎥 Video message",  # Body is required
+            'MediaUrl': media_url
+        }
         
-        if upload_response.status_code == 201:
-            media_url = upload_response.json()['uri']
-            media_url = f"https://api.twilio.com{media_url}"
-            
-            # Send message with media
-            message_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
-            data = {
-                'From': TWILIO_NUMBER,
-                'To': f"whatsapp:{to}",
-                'MediaUrl': media_url
-            }
-            
-            response = requests.post(
-                message_url, 
-                data=data, 
-                auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            )
-            logging.info(f"🎥 Sent video to {to} status: {response.status_code}")
-            
-        else:
-            logging.error(f"Video upload failed: {upload_response.text}")
+        response = requests.post(
+            message_url, 
+            data=data, 
+            auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        )
+        
+        logging.info(f"🎥 Sent video to {to} status: {response.status_code}")
+        if response.status_code != 201:
+            logging.error(f"Video send failed: {response.text}")
             
     except Exception as e:
         logging.error(f"Error sending video: {e}")
