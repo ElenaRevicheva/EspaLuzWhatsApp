@@ -94,29 +94,6 @@ def create_simple_video(script_text, output_path):
         logging.error(f"Video creation error: {e}")
         return False
 
-def transcribe_audio_with_openai(audio_file_path):
-    """Transcribe audio file using OpenAI Whisper"""
-    try:
-        with open(audio_file_path, 'rb') as f:
-            response = requests.post(
-                "https://api.openai.com/v1/audio/transcriptions",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                files={"file": f},
-                data={"model": "whisper-1"}
-            )
-        
-        if response.status_code == 200:
-            transcription = response.json().get("text", "")
-            logging.info(f"🎤 Transcribed: {transcription}")
-            return transcription
-        else:
-            logging.error(f"Transcription failed: {response.text}")
-            return None
-            
-    except Exception as e:
-        logging.error(f"Transcription error: {e}")
-        return None
-
 def translate_to_es_en(text):
     """Translate text to Spanish and English using OpenAI"""
     try:
@@ -135,32 +112,93 @@ def translate_to_es_en(text):
         logging.error(f"Translation error: {e}")
         return f"Translation: {text} (error in translation)"
 
-def convert_audio_format(input_path, output_path):
-    """Convert audio file to format suitable for Whisper (MP3/WAV)"""
+def convert_audio_format_enhanced(input_path, output_path):
+    """Enhanced audio conversion with better error handling"""
     try:
+        # Enhanced ffmpeg command with better audio processing
         cmd = [
             "ffmpeg", "-y",
             "-i", input_path,
             "-acodec", "mp3",
             "-ar", "16000",  # 16kHz sample rate for Whisper
+            "-ac", "1",      # Convert to mono
+            "-ab", "128k",   # Set bitrate
+            "-f", "mp3",     # Force MP3 format
             output_path
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        logging.info(f"🔄 Running conversion command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
-        if result.returncode == 0 and os.path.exists(output_path):
-            logging.info(f"🔄 Audio converted: {output_path}")
+        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 100:
+            logging.info(f"✅ Audio conversion successful: {output_path}")
             return True
         else:
-            logging.error(f"Audio conversion failed: {result.stderr}")
+            logging.error(f"❌ Audio conversion failed:")
+            logging.error(f"Return code: {result.returncode}")
+            logging.error(f"STDOUT: {result.stdout}")
+            logging.error(f"STDERR: {result.stderr}")
             return False
             
+    except subprocess.TimeoutExpired:
+        logging.error("❌ Audio conversion timed out")
+        return False
     except Exception as e:
-        logging.error(f"Audio conversion error: {e}")
+        logging.error(f"❌ Audio conversion error: {e}")
         return False
 
+def transcribe_audio_with_openai(audio_file_path):
+    """Transcribe audio file using OpenAI Whisper with enhanced error handling"""
+    try:
+        # Verify file exists and has content
+        if not os.path.exists(audio_file_path):
+            logging.error(f"Audio file does not exist: {audio_file_path}")
+            return None
+            
+        file_size = os.path.getsize(audio_file_path)
+        if file_size < 100:
+            logging.error(f"Audio file too small: {file_size} bytes")
+            return None
+            
+        logging.info(f"📤 Sending {file_size} byte audio file to Whisper API...")
+        
+        # Enhanced transcription with better error handling
+        with open(audio_file_path, 'rb') as f:
+            response = requests.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                files={"file": ("audio.mp3", f, "audio/mpeg")},
+                data={
+                    "model": "whisper-1",
+                    "language": "es",  # Hint that we expect Spanish
+                    "response_format": "json"
+                },
+                timeout=120  # Increased timeout for larger files
+            )
+        
+        logging.info(f"📥 Whisper API response: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            transcription = result.get("text", "").strip()
+            
+            if transcription:
+                logging.info(f"🎤 Transcribed ({len(transcription)} chars): {transcription[:100]}...")
+                return transcription
+            else:
+                logging.error("Empty transcription returned")
+                return None
+        else:
+            logging.error(f"Whisper API error: {response.status_code}")
+            logging.error(f"Response: {response.text}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Transcription error: {e}")
+        return None
+
 def process_whatsapp_voice_async(user_id, media_url):
-    """Process voice message asynchronously"""
+    """Process voice message asynchronously with proper error handling"""
     def process():
         try:
             logging.info(f"🎤 Starting voice processing for {user_id}")
@@ -168,35 +206,55 @@ def process_whatsapp_voice_async(user_id, media_url):
             # Send initial processing message
             send_whatsapp_message(user_id, "🎤 Procesando mensaje de voz... / Processing voice message...")
             
-            # Download audio file
-            logging.info(f"🔗 Downloading audio from: {media_url}")
-            response = requests.get(media_url, timeout=30)
-            if response.status_code != 200:
-                logging.error(f"Audio download failed: {response.status_code}")
+            # CRITICAL FIX: Get media URL with proper authentication
+            logging.info(f"🔗 Getting authenticated media URL from: {media_url}")
+            
+            # Step 1: Get the actual media URL with Twilio authentication
+            auth = HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            
+            # Download the actual audio content with authentication
+            logging.info(f"📥 Downloading audio from authenticated URL...")
+            download_response = requests.get(media_url, auth=auth, timeout=60)
+            
+            if download_response.status_code != 200:
+                logging.error(f"Audio download failed: {download_response.status_code}")
+                logging.error(f"Download response: {download_response.text}")
                 send_whatsapp_message(user_id, "❌ No pude descargar el audio. Could not download audio.")
                 return
             
-            logging.info(f"✅ Audio downloaded, size: {len(response.content)} bytes")
+            logging.info(f"✅ Audio downloaded successfully, size: {len(download_response.content)} bytes")
             
-            # Save downloaded audio
+            # Validate that we actually got audio content
+            if len(download_response.content) < 100:
+                logging.error(f"Downloaded content too small: {len(download_response.content)} bytes")
+                send_whatsapp_message(user_id, "❌ Archivo de audio demasiado pequeño. Audio file too small.")
+                return
+            
+            # Step 2: Save downloaded audio with proper filename
             timestamp = int(time.time())
             original_audio = f"/tmp/voice_original_{timestamp}.ogg"
             converted_audio = f"/tmp/voice_converted_{timestamp}.mp3"
             
             with open(original_audio, 'wb') as f:
-                f.write(response.content)
+                f.write(download_response.content)
             
             logging.info(f"💾 Audio saved to: {original_audio}")
             
-            # Convert audio format for Whisper
-            logging.info("🔄 Converting audio format...")
-            if not convert_audio_format(original_audio, converted_audio):
+            # Verify file was written correctly
+            if not os.path.exists(original_audio) or os.path.getsize(original_audio) < 100:
+                logging.error(f"Failed to save audio file properly")
+                send_whatsapp_message(user_id, "❌ Error guardando archivo de audio. Error saving audio file.")
+                return
+            
+            # Step 3: Convert audio format for Whisper (enhanced conversion)
+            logging.info("🔄 Converting audio format for transcription...")
+            if not convert_audio_format_enhanced(original_audio, converted_audio):
                 send_whatsapp_message(user_id, "❌ Error convirtiendo audio. Error converting audio.")
                 return
             
             logging.info(f"✅ Audio converted to: {converted_audio}")
             
-            # Transcribe audio
+            # Step 4: Transcribe audio using the same function as Telegram
             logging.info("🗣️ Transcribing with Whisper...")
             transcription = transcribe_audio_with_openai(converted_audio)
             
@@ -207,24 +265,55 @@ def process_whatsapp_voice_async(user_id, media_url):
             
             logging.info(f"✅ Transcription successful: {transcription}")
             
-            # Send transcription
+            # Step 5: Send transcription
             send_whatsapp_message(user_id, f"🗣️ Transcripción / Transcription:\n{transcription}")
             
-            # Get translation
+            # Step 6: Get translation
             logging.info("🌐 Translating...")
             translation = translate_to_es_en(transcription)
             send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
             
-            # Process transcription as text message (get Claude response + multimedia)
+            # Step 7: Process transcription as text message using the same logic as Telegram
             logging.info("🤖 Processing with Claude...")
-            process_transcribed_message(user_id, transcription)
+            
+            # Create mock user info for processing (similar to Telegram bot)
+            user_info = {
+                "id": user_id,
+                "first_name": f"WhatsApp_{user_id[-4:]}",
+                "username": None,
+                "language_code": "es"
+            }
+            
+            chat_info = {
+                "id": user_id,
+                "type": "private"
+            }
+            
+            # Import and use the same processing function as main.py
+            from main import process_message_internal
+            result = process_message_internal(user_id, transcription, user_info, chat_info)
+            
+            # Send Claude's response
+            send_whatsapp_message(user_id, f"🤖 Espaluz:\n{result['full_reply']}")
+            
+            # Generate and send audio response
+            audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
+            if generate_tts_audio(result["full_reply_clean"], audio_path):
+                send_whatsapp_media(user_id, audio_path, "audio")
+                logging.info("🎧 Audio response sent")
+            
+            # Generate and send video response
+            video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
+            if create_simple_video(result["short_reply_clean"], video_path):
+                send_whatsapp_media(user_id, video_path, "video")
+                logging.info("🎥 Video response sent")
             
             # Clean up temp files
             for file_path in [original_audio, converted_audio]:
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     
-            logging.info("🧹 Cleanup completed")
+            logging.info("🧹 Voice processing cleanup completed")
                     
         except Exception as e:
             logging.exception(f"❌ Error processing voice message: {e}")
@@ -235,27 +324,7 @@ def process_whatsapp_voice_async(user_id, media_url):
     thread.start()
     logging.info(f"🚀 Voice processing thread started for {user_id}")
 
-def process_transcribed_message(user_id, transcription):
-    """Process transcribed text and generate multimedia response"""
-    try:
-        # Get Claude response
-        full_reply, video_script = ask_claude(transcription)
-        
-        # Send Claude response
-        send_whatsapp_message(user_id, f"🤖 Espaluz:\n{full_reply}")
-        
-        # Generate and send audio response
-        audio_path = f"/tmp/reply_audio_{int(time.time())}.mp3"
-        if generate_tts_audio(full_reply, audio_path):
-            send_whatsapp_media(user_id, audio_path, "audio")
-        
-        # Generate and send video response
-        video_path = f"/tmp/espaluz_video_{int(time.time())}.mp4"
-        if create_simple_video(video_script, video_path):
-            send_whatsapp_media(user_id, video_path, "video")
-            
-    except Exception as e:
-        logging.error(f"Error processing transcribed message: {e}")
+def process_image_with_gpt4_vision(image_bytes):
     """Process image using GPT-4 Vision - Enhanced OCR"""
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -410,8 +479,20 @@ def send_whatsapp_message(to, text):
         logging.error(f"Error sending text message: {e}")
 
 def send_whatsapp_media(to, file_path, media_type="audio"):
-    """Send media file via hosted URL"""
+    """Send media file via hosted URL with enhanced error handling"""
     try:
+        # Verify file exists and has content
+        if not os.path.exists(file_path):
+            logging.error(f"Media file does not exist: {file_path}")
+            return False
+            
+        file_size = os.path.getsize(file_path)
+        if file_size < 100:
+            logging.error(f"Media file too small: {file_size} bytes")
+            return False
+            
+        logging.info(f"📤 Preparing to send {media_type} file ({file_size} bytes)")
+        
         # Create unique filename
         timestamp = int(time.time())
         filename = f"{media_type}_{timestamp}_{os.path.basename(file_path)}"
@@ -436,21 +517,32 @@ def send_whatsapp_media(to, file_path, media_type="audio"):
         res = requests.post(url, data=data, auth=HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
         logging.info(f"📤 Sent {media_type} to {to} status: {res.status_code} - URL: {media_url}")
         
-        if res.status_code != 201:
-            logging.error(f"{media_type.title()} send failed: {res.text}")
+        if res.status_code == 201:
+            logging.info(f"✅ {media_type.title()} sent successfully")
+            success = True
+        else:
+            logging.error(f"❌ {media_type.title()} send failed: {res.text}")
+            success = False
         
         # Clean up original file
         if os.path.exists(file_path):
             os.remove(file_path)
             
+        return success
+            
     except Exception as e:
         logging.error(f"Error sending {media_type}: {e}")
+        return False
 
 def process_whatsapp_message_async(user_id, user_text):
     """Process message and send multimedia response asynchronously"""
     def process():
         try:
             logging.info(f"📩 Processing message from {user_id}: {user_text}")
+            
+            # Get translation first
+            translation = translate_to_es_en(user_text)
+            send_whatsapp_message(user_id, f"📝 Traducción / Translation:\n{translation}")
             
             # Get Claude response
             full_reply, video_script = ask_claude(user_text)
@@ -480,8 +572,10 @@ def process_whatsapp_image_async(user_id, media_url):
     """Process image message asynchronously"""
     def process():
         try:
-            # Download image
-            response = requests.get(media_url)
+            # Download image with authentication
+            auth = HTTPBasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            response = requests.get(media_url, auth=auth)
+            
             if response.status_code == 200:
                 send_whatsapp_message(user_id, "🔍 Procesando imagen... / Processing image...")
                 
@@ -547,6 +641,8 @@ def handle_message():
         if not user_id:
             return "ok", 200
 
+        logging.info(f"📩 Message from {user_id}: media_count={media_count}, text='{user_text[:50]}'")
+
         # Handle media messages (images, voice, etc.)
         if media_count > 0:
             media_url = request.form.get("MediaUrl0", "")
@@ -558,6 +654,11 @@ def handle_message():
                 # Process image with OCR
                 process_whatsapp_image_async(user_id, media_url)
             elif 'audio' in media_type or 'ogg' in media_type:
+                # ENHANCED: Process voice message with better logging
+                logging.info(f"🎤 Voice message detected from {user_id}")
+                logging.info(f"🔗 Media URL: {media_url}")
+                logging.info(f"📋 Media Type: {media_type}")
+                
                 # Process voice message
                 process_whatsapp_voice_async(user_id, media_url)
             else:
@@ -582,7 +683,7 @@ def health():
     return jsonify({
         "status": "running",
         "bot": "Espaluz WhatsApp Production",
-        "version": "v3.0-production",
+        "version": "v4.0-complete",
         "features": ["text", "voice", "video", "image_processing", "voice_transcription", "claude_ai"],
         "endpoints": {
             "webhook": "/webhook",
@@ -593,5 +694,13 @@ def health():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    logging.info(f"🚀 Starting Production Espaluz on port {port}")
+    logging.info(f"🚀 Starting Complete Espaluz WhatsApp Bot on port {port}")
+    logging.info("✅ Features enabled:")
+    logging.info("   📝 Text messages (Russian, Spanish, English)")
+    logging.info("   🎤 Voice message transcription and processing")
+    logging.info("   📷 Image text recognition and translation")
+    logging.info("   🤖 Claude AI responses")
+    logging.info("   🎥 Video generation")
+    logging.info("   🎧 Audio responses")
+    logging.info("   🌍 Multi-language translation")
     app.run(host="0.0.0.0", port=port)
